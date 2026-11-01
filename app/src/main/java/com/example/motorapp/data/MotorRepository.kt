@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -18,6 +19,18 @@ import java.util.UUID
 @Serializable
 data class VehicleImageUrlUpdate(
     val image_url: String?
+)
+
+@Serializable
+data class FuelLogInsert(
+    @SerialName("user_id") val userId: String,
+    @SerialName("bike_id") val bikeId: String?,
+    @SerialName("odometer_km") val odometerKm: Double,
+    @SerialName("liters") val liters: Double,
+    @SerialName("total_cost") val totalCost: Double,
+    @SerialName("fuel_efficiency_km_l") val fuelEfficiencyKmL: Double? = null,
+    @SerialName("gas_station") val gasStation: String? = null,
+    @SerialName("fuel_date") val fuelDate: String? = null
 )
 
 class MotorRepository(private val userId: String) {
@@ -94,10 +107,14 @@ class MotorRepository(private val userId: String) {
                 }
             }
 
-            supabase.from("profiles").update(
-                mapOf("current_odometer_km" to newOdo)
-            ) {
-                filter { eq("id", userId) }
+            try {
+                supabase.from("profiles").update(
+                    mapOf("current_odometer_km" to newOdo)
+                ) {
+                    filter { eq("id", userId) }
+                }
+            } catch (profileEx: Exception) {
+                Log.w("MotorRepository", "Non-fatal: failed updating profile odo: ${profileEx.message}")
             }
         } catch (e: Exception) {
             Log.e("MotorRepository", "Error updating vehicle odo: ${e.message}", e)
@@ -143,7 +160,6 @@ class MotorRepository(private val userId: String) {
     suspend fun setActiveVehicle(bike: GarageBike) = withContext(Dispatchers.IO) {
         if (bike.id.isBlank()) return@withContext
 
-        // Instant local broadcast to all screens
         val updated = _garageBikesFlow.value.map {
             it.copy(isActive = (it.id == bike.id))
         }
@@ -322,17 +338,32 @@ class MotorRepository(private val userId: String) {
     // --- FUEL TRACKING & LIVE EFFICIENCY ---
     suspend fun getFuelLogs(bikeId: String? = null): List<FuelLog> = withContext(Dispatchers.IO) {
         try {
-            supabase.from("fuel_logs")
-                .select {
-                    filter {
-                        eq("user_id", userId)
-                        if (!bikeId.isNullOrBlank()) {
-                            eq("bike_id", bikeId)
+            // First attempt ordering by created_at, falling back to logged_at or natural sort
+            try {
+                supabase.from("fuel_logs")
+                    .select {
+                        filter {
+                            eq("user_id", userId)
+                            if (!bikeId.isNullOrBlank()) {
+                                eq("bike_id", bikeId)
+                            }
                         }
+                        order("created_at", Order.DESCENDING)
                     }
-                    order("logged_at", Order.DESCENDING)
-                }
-                .decodeList<FuelLog>()
+                    .decodeList<FuelLog>()
+            } catch (_: Exception) {
+                supabase.from("fuel_logs")
+                    .select {
+                        filter {
+                            eq("user_id", userId)
+                            if (!bikeId.isNullOrBlank()) {
+                                eq("bike_id", bikeId)
+                            }
+                        }
+                        order("logged_at", Order.DESCENDING)
+                    }
+                    .decodeList<FuelLog>()
+            }
         } catch (e: Exception) {
             Log.e("MotorRepository", "Error fetching fuel logs: ${e.message}", e)
             emptyList()
@@ -348,27 +379,34 @@ class MotorRepository(private val userId: String) {
         gasStation: String = "",
         fuelDate: String = ""
     ) = withContext(Dispatchers.IO) {
-        val efficiency = if (previousOdo != null && currentOdo > previousOdo && liters > 0.0) {
-            (currentOdo - previousOdo) / liters
-        } else null
+        try {
+            val efficiency = if (previousOdo != null && currentOdo > previousOdo && liters > 0.0) {
+                (currentOdo - previousOdo) / liters
+            } else null
 
-        val entry = FuelLog(
-            userId = userId,
-            bikeId = bikeId?.ifBlank { null },
-            odometerKm = currentOdo,
-            liters = liters,
-            totalCost = totalCost,
-            fuelEfficiencyKmL = efficiency,
-            gasStation = gasStation,
-            fuelDate = fuelDate.ifBlank { getCurrentDateString() }
-        )
+            val entry = FuelLogInsert(
+                userId = userId,
+                bikeId = bikeId?.ifBlank { null },
+                odometerKm = currentOdo,
+                liters = liters,
+                totalCost = totalCost,
+                fuelEfficiencyKmL = efficiency,
+                gasStation = gasStation.ifBlank { null },
+                fuelDate = fuelDate.ifBlank { getCurrentDateString() }
+            )
 
-        supabase.from("fuel_logs").insert(entry)
+            Log.d("MotorRepository", "Executing Supabase fuel_logs insert: $entry")
+            supabase.from("fuel_logs").insert(entry)
 
-        if (!bikeId.isNullOrBlank()) {
-            updateVehicleOdometer(bikeId, currentOdo)
-        } else {
-            updateOdometer(currentOdo)
+            if (!bikeId.isNullOrBlank()) {
+                updateVehicleOdometer(bikeId, currentOdo)
+            } else {
+                updateOdometer(currentOdo)
+            }
+            Log.d("MotorRepository", "Fuel log saved and odometer updated successfully")
+        } catch (e: Exception) {
+            Log.e("MotorRepository", "CRITICAL ERROR inserting fuel log: ${e.message}", e)
+            throw e
         }
     }
 
@@ -446,15 +484,12 @@ class MotorRepository(private val userId: String) {
             val fileName = "user_vehicles/${userId}_${bikeId}_${UUID.randomUUID()}.jpg"
             val bucket = supabase.storage.from("motorcycles")
 
-            // 1. Upload file to Supabase storage
             bucket.upload(fileName, imageBytes) {
                 upsert = true
             }
 
-            // 2. Obtain public CDN URL
             val publicUrl = bucket.publicUrl(fileName)
 
-            // 3. Persist image_url directly into the vehicles table
             supabase.from("vehicles").update(
                 mapOf("image_url" to publicUrl)
             ) {
@@ -464,7 +499,6 @@ class MotorRepository(private val userId: String) {
                 }
             }
 
-            // 4. Update the reactive local state immediately (Zero latency)
             val updatedBikes = _garageBikesFlow.value.map { bike ->
                 if (bike.id == bikeId) bike.copy(imageUrl = publicUrl) else bike
             }

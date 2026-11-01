@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,7 +45,6 @@ private val CardBorderColor = Color(0xFFE2E8F0)
 private val FieldBorderDark = Color(0xFFCBD5E1)
 private val LabelColorDark = Color(0xFF475569)
 
-// Common fuel brands in the Philippines
 private val PhilippineGasStations = listOf(
     "Petron",
     "Shell",
@@ -91,7 +91,7 @@ fun FuelLogScreen(
                 .fillMaxSize()
                 .padding(horizontal = 20.dp)
         ) {
-            // Header with Drawer Toggle & Add Action
+            // Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -103,7 +103,6 @@ fun FuelLogScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // Drawer Hamburger Button
                     Surface(
                         color = CardBg,
                         shape = CircleShape,
@@ -131,7 +130,7 @@ fun FuelLogScreen(
                         )
                         Text(
                             text = if (!hasNoBike && activeBike != null) {
-                                "${activeBike.bikeName} • %,d km".format(activeOdometer.roundToInt())
+                                "${activeBike.bikeName} (%,d km)".format(activeOdometer.roundToInt())
                             } else {
                                 "Track consumption & gas expenses"
                             },
@@ -159,7 +158,7 @@ fun FuelLogScreen(
                 }
             }
 
-            // Body: Full-height Empty State vs Refuel Content
+            // Body
             if (hasNoBike) {
                 Box(
                     modifier = Modifier
@@ -303,7 +302,7 @@ fun FuelLogScreen(
                         }
                     }
 
-                    // Section Header with Refresh Button
+                    // Section Header
                     item {
                         Row(
                             modifier = Modifier
@@ -367,12 +366,13 @@ fun FuelLogScreen(
                 bikeName = activeBike.bikeName,
                 currentOdo = activeOdometer,
                 onDismiss = { showAddDialog = false },
-                onConfirm = { liters, cost, station, date ->
+                onConfirm = { liters, cost, station, date, newOdo ->
                     viewModel.logRefuel(
                         liters = liters,
                         totalCost = cost,
                         gasStation = station,
-                        fuelDate = date
+                        fuelDate = date,
+                        customOdo = newOdo
                     )
                     showAddDialog = false
                 }
@@ -501,8 +501,9 @@ private fun AddFuelDialog(
     bikeName: String,
     currentOdo: Double,
     onDismiss: () -> Unit,
-    onConfirm: (Double, Double, String, String) -> Unit
+    onConfirm: (Double, Double, String, String, Double) -> Unit
 ) {
+    var odoText by remember { mutableStateOf(currentOdo.roundToInt().toString()) }
     var litersText by remember { mutableStateOf("") }
     var costText by remember { mutableStateOf("") }
     var gasStationText by remember { mutableStateOf("") }
@@ -581,7 +582,7 @@ private fun AddFuelDialog(
                     color = TextDark
                 )
                 Text(
-                    text = "Current Odometer: %,d km".format(currentOdo.roundToInt()),
+                    text = "Previous Odometer: %,d km".format(currentOdo.roundToInt()),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = LeafGreen
@@ -590,6 +591,28 @@ private fun AddFuelDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Current / New Odometer Input
+                OutlinedTextField(
+                    value = odoText,
+                    onValueChange = { input ->
+                        val normalized = input.replace(',', '.')
+                        if (normalized.isEmpty() || normalized.matches(Regex("^\\d*\\.?\\d*$"))) {
+                            odoText = normalized
+                        }
+                    },
+                    label = { Text("Current Odometer (km)", fontWeight = FontWeight.SemiBold) },
+                    placeholder = { Text("e.g. ${currentOdo.roundToInt()}") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Speed, contentDescription = null, tint = LeafGreen)
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = inputColors,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Gas Station Selector
                 ExposedDropdownMenuBox(
                     expanded = isStationExpanded,
                     onExpandedChange = { isStationExpanded = it }
@@ -667,6 +690,7 @@ private fun AddFuelDialog(
                     }
                 }
 
+                // Date Picker trigger
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -692,13 +716,15 @@ private fun AddFuelDialog(
                     )
                 }
 
+                // Liters Loaded
                 OutlinedTextField(
                     value = litersText,
                     onValueChange = { input ->
-                        if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d*$"))) {
-                            litersText = if (input.startsWith("0") && input.length > 1 && input[1] != '.') {
-                                input.trimStart('0')
-                            } else input
+                        val normalized = input.replace(',', '.')
+                        if (normalized.isEmpty() || normalized.matches(Regex("^\\d*\\.?\\d*$"))) {
+                            litersText = if (normalized.startsWith("0") && normalized.length > 1 && normalized[1] != '.') {
+                                normalized.trimStart('0')
+                            } else normalized
                         }
                     },
                     label = { Text("Liters Loaded (L)", fontWeight = FontWeight.SemiBold) },
@@ -709,13 +735,15 @@ private fun AddFuelDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                // Total Cost
                 OutlinedTextField(
                     value = costText,
                     onValueChange = { input ->
-                        if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d*$"))) {
-                            costText = if (input.startsWith("0") && input.length > 1 && input[1] != '.') {
-                                input.trimStart('0')
-                            } else input
+                        val normalized = input.replace(',', '.')
+                        if (normalized.isEmpty() || normalized.matches(Regex("^\\d*\\.?\\d*$"))) {
+                            costText = if (normalized.startsWith("0") && normalized.length > 1 && normalized[1] != '.') {
+                                normalized.trimStart('0')
+                            } else normalized
                         }
                     },
                     label = { Text("Total Cost (₱)", fontWeight = FontWeight.SemiBold) },
@@ -730,15 +758,16 @@ private fun AddFuelDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val lit = litersText.toDoubleOrNull() ?: 0.0
-                    val cost = costText.toDoubleOrNull() ?: 0.0
-                    if (lit > 0.0 && cost > 0.0) {
-                        onConfirm(lit, cost, gasStationText.trim(), selectedDateText)
+                    val lit = litersText.replace(',', '.').toDoubleOrNull() ?: 0.0
+                    val cost = costText.replace(',', '.').toDoubleOrNull() ?: 0.0
+                    val enteredOdo = odoText.replace(',', '.').toDoubleOrNull() ?: currentOdo
+                    if (lit > 0.0 && cost > 0.0 && enteredOdo >= 0.0) {
+                        onConfirm(lit, cost, gasStationText.trim(), selectedDateText, enteredOdo)
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = LeafGreen),
                 shape = RoundedCornerShape(10.dp),
-                enabled = litersText.isNotBlank() && costText.isNotBlank()
+                enabled = litersText.isNotBlank() && costText.isNotBlank() && odoText.isNotBlank()
             ) {
                 Text("Save", fontWeight = FontWeight.Bold, color = Color.White)
             }

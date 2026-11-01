@@ -63,19 +63,37 @@ data class UserProfile(
     @SerialName("avatar_url") val avatarUrl: String? = null
 )
 
-// Fuel Fill-up Log (Unified)
 @Serializable
 data class FuelLog(
+    @SerialName("id")
     val id: String? = null,
-    @SerialName("user_id") val userId: String = "",
-    @SerialName("bike_id") val bikeId: String? = null,
-    @SerialName("odometer_km") val odometerKm: Double = 0.0,
-    val liters: Double = 0.0,
-    @SerialName("total_cost") val totalCost: Double = 0.0,
-    @SerialName("fuel_efficiency_km_l") val fuelEfficiencyKmL: Double? = null,
-    @SerialName("gas_station") val gasStation: String? = null,
-    @SerialName("fuel_date") val fuelDate: String? = null,
-    @SerialName("logged_at") val loggedAt: String? = null
+
+    @SerialName("user_id")
+    val userId: String,
+
+    @SerialName("bike_id")
+    val bikeId: String? = null,
+
+    @SerialName("odometer_km")
+    val odometerKm: Double,
+
+    @SerialName("liters")
+    val liters: Double,
+
+    @SerialName("total_cost")
+    val totalCost: Double,
+
+    @SerialName("fuel_efficiency_km_l")
+    val fuelEfficiencyKmL: Double? = null,
+
+    @SerialName("gas_station")
+    val gasStation: String? = null,
+
+    @SerialName("fuel_date")
+    val fuelDate: String? = null,
+
+    @SerialName("logged_at")
+    val loggedAt: String? = null
 )
 
 // Reference OEM Specs (Synced with Supabase motorcycle_catalog table)
